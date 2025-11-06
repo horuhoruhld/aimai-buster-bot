@@ -87,10 +87,14 @@ def slack_events():
         bot_id = event.get("bot_id", "")
 
         if subtype == "bot_message" or bot_id:
-            # bot自身の発言はスルー
             return jsonify({"status": "ignored bot message"}), 200
 
-        # 👇 ここに来たら人間の発言！
+        # 👇 ここでイベントタイプを絞る（重複防止）
+        event_type = event.get("type", "")
+        if event_type not in ["app_mention", "message"]:
+            return jsonify({"status": f"ignored event type: {event_type}"}), 200
+
+        # 👇 ここに来たら人間のメッセージのみ
         user_msg = event.get("text", "")
         channel = event.get("channel", "")
 
@@ -128,7 +132,6 @@ def slack_events():
             },
         )
 
-        # ✅ 応答テキストを安全に取得
         try:
             reply_text = res.json()["choices"][0]["message"]["content"]
         except Exception as e:
@@ -139,12 +142,8 @@ def slack_events():
             "https://slack.com/api/chat.postMessage",
             headers={
                 "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json={"channel": channel, "text": reply_text},
-        )
+                "Content-Type": "appli
 
-    return jsonify({"status": "ok"}), 200
 
 
 # =====================================
