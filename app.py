@@ -70,7 +70,7 @@ def webhook():
 def slack_events():
     data = request.get_json(force=True)
 
-    # ✅ Slack URL検証（challenge確認）
+    # ✅ SlackのURL検証（challenge確認）
     if "challenge" in data:
         return Response(
             json.dumps({"challenge": data["challenge"]}),
@@ -78,79 +78,88 @@ def slack_events():
             mimetype="application/json"
         )
 
-    # ✅ 通常のイベント処理
-    if "event" in data:
-        event = data["event"]
+    # ✅ イベントが存在しない場合
+    if "event" not in data:
+        return jsonify({"status": "no event"}), 200
 
-        # 👇 bot発言 or subtype が "bot_message" の場合だけ無視
-        subtype = event.get("subtype", "")
-        bot_id = event.get("bot_id", "")
+    event = data["event"]
 
-        if subtype == "bot_message" or bot_id:
-            return jsonify({"status": "ignored bot message"}), 200
+    # ✅ botや重複イベントを除外
+    subtype = event.get("subtype", "")
+    bot_id = event.get("bot_id", "")
+    event_type = event.get("type", "")
+    event_ts = event.get("event_ts", "")
 
-        # 👇 ここでイベントタイプを絞る（重複防止）
-        event_type = event.get("type", "")
-        if event_type not in ["app_mention", "message"]:
-            return jsonify({"status": f"ignored event type: {event_type}"}), 200
+    # 👇 bot発言は無視
+    if subtype == "bot_message" or bot_id:
+        return jsonify({"status": "ignored bot message"}), 200
 
-        # 👇 ここに来たら人間のメッセージのみ
-        user_msg = event.get("text", "")
-        channel = event.get("channel", "")
+    # 👇 メンション以外は無視（これで @aimai-buster に反応）
+    if event_type != "app_mention":
+        return jsonify({"status": f"ignored event type: {event_type}"}), 200
 
-        if not user_msg or not channel:
-            return jsonify({"status": "no text or channel"}), 200
+    # 👇 重複防止（同じイベントTSをスキップ）
+    if not hasattr(app, "processed_events"):
+        app.processed_events = set()
 
-        # ✅ OpenAI呼び出し（あいまいバスター）
-        res = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "あなたは「あいまいバスター」として、ユーザーの文章から曖昧な表現"
-                            "（例：「いい感じ」「なるはや」「たぶん」「いつか」「多めに」「それ」「これ」など）をすべて特定し、"
-                            "論理的・客観的・誰でも理解できる明確な言葉に置き換える専門家です。"
-                            "主語が抜けている場合も補完してください。\n\n"
-                            "文章が送られてきた場合は、以下に沿って添削を行ってください。\n\n"
-                            "🧩 明確化バスター結果：\n\n"
-                            "🔹 翻訳（あいまいバスターVer.）：\n"
-                            "（明確化した文）\n\n"
-                            "🔹 補足情報：\n"
-                            "トーン：会話の温度感を記載（例：怒っている、急いでほしい、ゆっくりでいい 等）\n"
-                            "目的：文章を書いた目的を記載（例：断る、指示を実行してほしい 等）"
-                        ),
-                    },
-                    {"role": "user", "content": user_msg},
-                ],
-            },
-        )
+    if event_ts in app.processed_events:
+        return jsonify({"status": "duplicate event"}), 200
 
-        try:
-            reply_text = res.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            reply_text = f"エラーが発生しました: {e}"
+    app.processed_events.add(event_ts)
 
-        # ✅ Slackへ返信
-        requests.post(
-            "https://slack.com/api/chat.postMessage",
-            headers={
-                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json={"channel": channel, "text": reply_text},
-        )
+    # ✅ メッセージ内容取得
+    user_msg = event.get("text", "")
+    channel = event.get("channel", "")
+    if not user_msg or not channel:
+        return jsonify({"status": "no text or channel"}), 200
+
+    # ✅ OpenAI呼び出し（あいまいバスター）
+    res = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "あなたは「あいまいバスター」として、ユーザーの文章から曖昧な表現"
+                        "（例：「いい感じ」「なるはや」「たぶん」「いつか」「多めに」「それ」「これ」など）をすべて特定し、"
+                        "論理的・客観的・誰でも理解できる明確な言葉に置き換える専門家です。"
+                        "主語が抜けている場合も補完してください。\n\n"
+                        "文章が送られてきた場合は、以下に沿って添削を行ってください。\n\n"
+                        "🧩 明確化バスター結果：\n\n"
+                        "🔹 翻訳（あいまいバスターVer.）：\n"
+                        "（明確化した文）\n\n"
+                        "🔹 補足情報：\n"
+                        "トーン：会話の温度感を記載（例：怒っている、急いでほしい、ゆっくりでいい 等）\n"
+                        "目的：文章を書いた目的を記載（例：断る、指示を実行してほしい 等）"
+                    ),
+                },
+                {"role": "user", "content": user_msg},
+            ],
+        },
+    )
+
+    try:
+        reply_text = res.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        reply_text = f"エラーが発生しました: {e}"
+
+    # ✅ Slackに返信
+    requests.post(
+        "https://slack.com/api/chat.postMessage",
+        headers={
+            "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        json={"channel": channel, "text": reply_text},
+    )
 
     return jsonify({"status": "ok"}), 200
-
-
-
 
 # =====================================
 # 🌱 メイン起動
