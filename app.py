@@ -5,13 +5,18 @@ import json
 
 app = Flask(__name__)
 
+# ✅ 環境変数の読み込み
 LINE_ACCESS_TOKEN = os.getenv("LINE_ACCESS_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 
+# =====================================
+# 🌱 LINE Webhook
+# =====================================
 @app.route("/webhook", methods=["POST"])
 def webhook():
     body = request.json
-    for event in body["events"]:
+    for event in body.get("events", []):
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_msg = event["message"]["text"]
 
@@ -54,19 +59,24 @@ def webhook():
                     "messages": [{"type": "text", "text": reply_text}],
                 },
             )
-    return jsonify({"status": "ok"})
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    return jsonify({"status": "ok"}), 200
 
+
+# =====================================
+# 🌱 Slack Events
+# =====================================
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
     data = request.get_json(force=True)
 
-    # ✅ SlackのURL検証（最初のchallenge確認）
+    # ✅ Slack URL検証（challenge確認）
     if "challenge" in data:
-        return jsonify({"challenge": data["challenge"]}), 200
+        return Response(
+            json.dumps({"challenge": data["challenge"]}),
+            status=200,
+            mimetype="application/json"
+        )
 
     # ✅ 通常のイベント処理
     if "event" in data and "text" in data["event"]:
@@ -82,7 +92,10 @@ def slack_events():
                 "messages": [
                     {
                         "role": "system",
-                        "content": "あなたは『あいまいバスター』です。曖昧な表現を論理的で誰でも理解できる言葉に変換します。",
+                        "content": """
+あなたは「あいまいバスター」として、ユーザーの文章から曖昧な表現を特定し、
+誰にでも理解できる明確な言葉に変換します。
+""",
                     },
                     {"role": "user", "content": user_msg},
                 ],
@@ -96,9 +109,17 @@ def slack_events():
             "https://slack.com/api/chat.postMessage",
             headers={
                 "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
-                "Content-type": "application/json",
+                "Content-Type": "application/json",
             },
             json={"channel": channel, "text": reply_text},
         )
 
     return jsonify({"status": "ok"}), 200
+
+
+# =====================================
+# 🌱 メイン起動
+# =====================================
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
