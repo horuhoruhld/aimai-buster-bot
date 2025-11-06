@@ -58,3 +58,45 @@ def webhook():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
+
+@app.route("/slack/events", methods=["POST"])
+def slack_events():
+    data = request.json
+
+    # Slack検証（最初の接続確認用）
+    if "challenge" in data:
+        return jsonify({"challenge": data["challenge"]})
+
+    # 通常メッセージイベント
+    if "event" in data and "text" in data["event"]:
+        user_msg = data["event"]["text"]
+        channel = data["event"]["channel"]
+
+        res = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "あなたは『あいまいバスター』です。曖昧な表現を明確に言い換えて返答します。",
+                    },
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+        )
+
+        reply_text = res.json()["choices"][0]["message"]["content"]
+
+        # Slack返信
+        requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={
+                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+                "Content-type": "application/json",
+            },
+            json={"channel": channel, "text": reply_text},
+        )
+
+    return jsonify({"status": "ok"})
