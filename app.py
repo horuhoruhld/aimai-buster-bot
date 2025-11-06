@@ -79,42 +79,16 @@ def slack_events():
         )
 
     # ✅ 通常のイベント処理
-    if "event" in data and "text" in data["event"]:
-        user_msg = data["event"]["text"]
-        channel = data["event"]["channel"]
+    if "event" in data:
+        event = data["event"]
 
-        # OpenAI呼び出し
-        res = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": """
-あなたは「あいまいバスター」として、ユーザーの文章から曖昧な表現を特定し、
-誰にでも理解できる明確な言葉に変換します。
-""",
-                    },
-                    {"role": "user", "content": user_msg},
-                ],
-            },
-        )
+        # 👇 ここが今回の追記ポイント（botの発言を無視する）
+        if event.get("subtype") == "bot_message" or event.get("bot_id"):
+            return jsonify({"status": "ignored bot message"}), 200
 
-        reply_text = res.json()["choices"][0]["message"]["content"]
-
-        # Slackへ返信
-        requests.post(
-            "https://slack.com/api/chat.postMessage",
-            headers={
-                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json={"channel": channel, "text": reply_text},
-        )
-
-    return jsonify({"status": "ok"}), 200
+        if "text" in event:
+            user_msg = event["text"]
+            channel = event["channel"]
 
 
 # =====================================
