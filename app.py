@@ -82,13 +82,69 @@ def slack_events():
     if "event" in data:
         event = data["event"]
 
-        # 👇 ここが今回の追記ポイント（botの発言を無視する）
-        if event.get("subtype") == "bot_message" or event.get("bot_id"):
+        # 👇 bot発言 or subtype が "bot_message" の場合だけ無視
+        subtype = event.get("subtype", "")
+        bot_id = event.get("bot_id", "")
+
+        if subtype == "bot_message" or bot_id:
+            # bot自身の発言はスルー
             return jsonify({"status": "ignored bot message"}), 200
 
-        if "text" in event:
-            user_msg = event["text"]
-            channel = event["channel"]
+        # 👇 ここに来たら人間の発言！
+        user_msg = event.get("text", "")
+        channel = event.get("channel", "")
+
+        if not user_msg or not channel:
+            return jsonify({"status": "no text or channel"}), 200
+
+        # ✅ OpenAI呼び出し（あいまいバスター）
+        res = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "あなたは「あいまいバスター」として、ユーザーの文章から曖昧な表現"
+                            "（例：「いい感じ」「なるはや」「たぶん」「いつか」「多めに」「それ」「これ」など）をすべて特定し、"
+                            "論理的・客観的・誰でも理解できる明確な言葉に置き換える専門家です。"
+                            "主語が抜けている場合も補完してください。\n\n"
+                            "文章が送られてきた場合は、以下に沿って添削を行ってください。\n\n"
+                            "🧩 明確化バスター結果：\n\n"
+                            "🔹 翻訳（あいまいバスターVer.）：\n"
+                            "（明確化した文）\n\n"
+                            "🔹 補足情報：\n"
+                            "トーン：会話の温度感を記載（例：怒っている、急いでほしい、ゆっくりでいい 等）\n"
+                            "目的：文章を書いた目的を記載（例：断る、指示を実行してほしい 等）"
+                        ),
+                    },
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+        )
+
+        # ✅ 応答テキストを安全に取得
+        try:
+            reply_text = res.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            reply_text = f"エラーが発生しました: {e}"
+
+        # ✅ Slackへ返信
+        requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={
+                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={"channel": channel, "text": reply_text},
+        )
+
+    return jsonify({"status": "ok"}), 200
 
 
 # =====================================
