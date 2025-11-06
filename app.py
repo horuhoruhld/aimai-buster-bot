@@ -142,7 +142,13 @@ def slack_events():
             "https://slack.com/api/chat.postMessage",
             headers={
                 "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
-                "Content-Type": "appli
+                "Content-Type": "application/json",
+            },
+            json={"channel": channel, "text": reply_text},
+        )
+
+    return jsonify({"status": "ok"}), 200
+
 
 
 
