@@ -61,17 +61,18 @@ if __name__ == "__main__":
 
 @app.route("/slack/events", methods=["POST"])
 def slack_events():
-    data = request.json
+    data = request.get_json(force=True)
 
-    # Slack検証（最初の接続確認用）
+    # ✅ SlackのURL検証（最初のchallenge確認）
     if "challenge" in data:
-        return jsonify({"challenge": data["challenge"]})
+        return jsonify({"challenge": data["challenge"]}), 200
 
-    # 通常メッセージイベント
+    # ✅ 通常のイベント処理
     if "event" in data and "text" in data["event"]:
         user_msg = data["event"]["text"]
         channel = data["event"]["channel"]
 
+        # OpenAI呼び出し
         res = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
@@ -80,7 +81,7 @@ def slack_events():
                 "messages": [
                     {
                         "role": "system",
-                        "content": "あなたは『あいまいバスター』です。曖昧な表現を明確に言い換えて返答します。",
+                        "content": "あなたは『あいまいバスター』です。曖昧な表現を論理的で誰でも理解できる言葉に変換します。",
                     },
                     {"role": "user", "content": user_msg},
                 ],
@@ -89,7 +90,7 @@ def slack_events():
 
         reply_text = res.json()["choices"][0]["message"]["content"]
 
-        # Slack返信
+        # Slackへ返信
         requests.post(
             "https://slack.com/api/chat.postMessage",
             headers={
@@ -99,4 +100,4 @@ def slack_events():
             json={"channel": channel, "text": reply_text},
         )
 
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok"}), 200
